@@ -20,24 +20,36 @@ const transporter = nodemailer.createTransport({
 });
 
 async function sendEmailToAllUsers(subject, message) {
-    try {
-        const users = await User.find({}, 'email'); // Fetch user emails
-        for (const user of users) {
-            try {
-                await transporter.sendMail({
-                    from: 'pecommerce8@gmail.com',
-                    to: user.email,
-                    subject: subject,
-                    text: message
-                });
-            } catch (emailError) {
-                console.error(`Error sending email to ${user.email}:`, emailError);
-            }
-        }
-    } catch (error) {
-        console.error('Error fetching users or sending emails:', error);
+  let errors = [];
+  let successCount = 0;
+
+  try {
+    const users = await User.find({}, 'email'); // Fetch user emails
+
+    // Iterate over each user and send email
+    for (const user of users) {
+      try {
+        await transporter.sendMail({
+          from: 'pecommerce8@gmail.com',
+          to: user.email,
+          subject: subject,
+          text: message
+        });
+        console.log(`Sent coupon email to user ${user.email}`);
+        successCount++;
+      } catch (emailError) {
+        errors.push(`Error sending email to ${user.email}: ${emailError.message}`);
+      }
     }
+
+    console.log(`Successfully sent emails to ${successCount} users.`);
+    if (errors.length > 0) {
+      console.error('Errors occurred:', errors);
+    }
+  } catch (error) {
+    console.error('Error fetching users or sending emails:', error);
   }
+}
   
   // Get all coupons route
   router.get('/get-coupon', async (req, res) => {
@@ -58,26 +70,45 @@ async function sendEmailToAllUsers(subject, message) {
   
   // Save coupon route
   router.post('/save-coupon', async (req, res) => {
-    try {
-      const { code, discountPercentage } = req.body;
+      const { code, discountPercentage, expiryDate, usageLimit } = req.body;
+
+      if (!code || !discountPercentage || !expiryDate) {
+        return res.status(422).json({
+          success: false,
+          message: 'Coupon code, discount percentage, and expiry date are required.'
+        });
+      }
+
+      const existingCoupon = await Coupon.findOne({ code });
+      if (existingCoupon) {
+        return res.status(422).json({
+          success: false,
+          message: 'Coupon code already exists.'
+        });
+      }
   
-      const coupon = new Coupon({
+      const newCoupon  = new Coupon({
         code,
-        discountPercentage
+        discountPercentage,
+        expiryDate,
+        usageLimit
       });
-  
-      await coupon.save();
+      
+      try {
+      await newCoupon.save();
   
       res.status(201).json({
         success: true,
         message: 'Coupon saved successfully',
-        coupon
+        coupon: newCoupon
       });
   
       // Send email to all users about new coupon
       const subject = 'New Coupon Available!';
       const message = `A new coupon ${code} is now available with ${discountPercentage}% discount. Use it in your next purchase!`;
+      
       await sendEmailToAllUsers(subject, message);
+
     } catch (error) {
       res.status(500).json({
         success: false,
@@ -100,6 +131,20 @@ async function sendEmailToAllUsers(subject, message) {
           message: 'Invalid coupon code'
         });
       }
+
+      if (new Date() > new Date(coupon.expiryDate)) {
+        return res.status(422).json({
+          success: false,
+          message: 'Coupon has expired.'
+        });
+      }
+
+      if (coupon.usageCount >= coupon.usageLimit) {
+        return res.status(422).json({
+          success: false,
+          message: 'Coupon usage limit exceeded.'
+        });
+      }
   
       res.status(200).json({
         success: true,
@@ -120,8 +165,7 @@ async function sendEmailToAllUsers(subject, message) {
       const { code, discountPercentage } = req.body;
       
       const deletedCoupon = await Coupon.findOneAndDelete({ 
-        code,
-        discountPercentage 
+        code
       });
   
       if (!deletedCoupon) {

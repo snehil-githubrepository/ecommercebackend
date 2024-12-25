@@ -1,43 +1,54 @@
-const express = require('express');
-const mongoose = require('mongoose');
-const cors = require('cors');
-const nodemailer = require('nodemailer');
-const session = require('express-session');
-const MongoStore = require('connect-mongo');
-const authRoutes = require('./routes/auth');
-const uuid = require('uuid');
-const bcrypt = require('bcrypt'); // Added bcrypt import
-const Seller = require('./models/seller');
-const adminAuthRoutes = require('./routes/adminauth'); 
-const cartRoutes = require('./routes/cart');
-const complaintsRoutes = require('./routes/complaints');
-const couponRoutes = require('./routes/coupon')
-const Product = require('./models/product');
-const crypto = require('crypto');
-require('dotenv').config();
+const express = require("express");
+const mongoose = require("mongoose");
+const cors = require("cors");
+const nodemailer = require("nodemailer");
+const session = require("express-session");
+const multer = require("multer");
+const MongoStore = require("connect-mongo");
+const authRoutes = require("./routes/auth");
+const uuid = require("uuid");
+const bcrypt = require("bcrypt"); // Added bcrypt import
+const Seller = require("./models/seller");
+const adminAuthRoutes = require("./routes/adminauth");
+const cartRoutes = require("./routes/cart");
+const complaintsRoutes = require("./routes/complaints");
+const couponRoutes = require("./routes/coupon");
+const Product = require("./models/product");
+const crypto = require("crypto");
+require("dotenv").config();
 
 const app = express();
 
+const upload = multer({ dest: "uploads/" });
+
 // Middleware
-app.use(cors({
-  origin: ['http://localhost:3000','https://merabestie.com','https://hosteecommerce.vercel.app'], 
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
-}));
+app.use(
+  cors({
+    origin: [
+      "http://localhost:3000",
+      "https://merabestie.com",
+      "https://hosteecommerce.vercel.app",
+    ],
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+  })
+);
+
+// app.use(cors());
 
 app.use(express.json());
-app.use(require('cookie-parser')());
+app.use(require("cookie-parser")());
 app.use(express.urlencoded({ extended: true }));
 
 app.use(
   session({
-    secret: crypto.randomBytes(64).toString('hex'),
+    secret: crypto.randomBytes(64).toString("hex"),
     resave: false,
     saveUninitialized: false,
     store: MongoStore.create({
       mongoUrl: process.env.MONGO_URI,
-      collectionName: 'sessions',
+      collectionName: "sessions",
     }),
     cookie: {
       secure: false,
@@ -48,109 +59,161 @@ app.use(
 );
 
 // Routes
-app.use('/auth', authRoutes);
-app.use('/admin', adminAuthRoutes);
-app.use('/cart', cartRoutes);
-app.use('/complaints', complaintsRoutes);
-app.use('/coupon',couponRoutes)
+app.use("/auth", authRoutes);
+app.use("/admin", adminAuthRoutes);
+app.use("/cart", cartRoutes);
+app.use("/complaints", complaintsRoutes);
+app.use("/coupon", couponRoutes);
 
 // MongoDB Connection
 const uri = process.env.MONGO_URI;
-mongoose.connect(uri)
-.then(() => console.log('Connected to MongoDB'))
-.catch(err => console.error('MongoDB connection error:', err));
-
+mongoose
+  .connect(uri)
+  .then(() => console.log("Connected to MongoDB"))
+  .catch((err) => console.error("MongoDB connection error:", err));
 
 // Keep-Alive Route
-app.get('/keep-alive', (req, res) => {
+app.get("/keep-alive", (req, res) => {
   res.status(200).json({
     success: true,
-    message: 'Server is up and running'
+    message: "Server is up and running",
   });
 });
 
 // Get Products by Category Route
-app.post('/product/category', async (req, res) => {
+app.post("/product/category", async (req, res) => {
   try {
     const { category } = req.body;
-    
+
     // Normalize the category to handle case variations
     let normalizedCategory = category.toLowerCase();
     let searchCategory;
 
     // Map normalized categories to their proper display versions
-    switch(normalizedCategory) {
-      case 'gift-boxes':
-      case 'gift boxes':
-        searchCategory = 'Gift Boxes';
+    switch (normalizedCategory) {
+      case "gift-boxes":
+      case "gift boxes":
+        searchCategory = "Gift Boxes";
         break;
-      case 'books':
-        searchCategory = 'Books';
-         break;
-      case 'stationery':
-        searchCategory = 'Stationery';
+      case "books":
+        searchCategory = "Books";
+        break;
+      case "stationery":
+        searchCategory = "Stationery";
         break;
       default:
         searchCategory = category;
     }
-    
+
     const products = await Product.find({ category: searchCategory });
 
     res.status(200).json({
       success: true,
-      products
+      products,
     });
-
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: 'Error fetching products by category',
-      error: error.message
+      message: "Error fetching products by category",
+      error: error.message,
     });
   }
 });
 
-
 // Create Product Route
-app.post('/create-product', async (req, res) => {
+app.post("/create-product", async (req, res) => {
   try {
-    const productData = req.body;
+    const {
+      name,
+      price,
+      category,
+      description,
+      inStockValue,
+      soldStockValue,
+      productId,
+      rating,
+      visibility,
+      images,
+    } = req.body;
+
+    if (!name || !price || !category || !inStockValue || !productId) {
+      return res.status(422).json({
+        success: false,
+        message: "Required fields are missing",
+      });
+    }
+
+    if (
+      isNaN(price) ||
+      isNaN(inStockValue) ||
+      isNaN(soldStockValue) ||
+      isNaN(rating)
+    ) {
+      return res.status(422).json({
+        success: false,
+        message: "Price, stock values, and rating must be numeric",
+      });
+    }
+
+    const existingProduct = await Product.findOne({ productId });
+    if (existingProduct) {
+      return res.status(422).json({
+        success: false,
+        message: "Product with this productId already exists",
+      });
+    }
+
+    const imageUrls = images || [];
+
+    const productData = {
+      name,
+      price,
+      category,
+      description: description || "",
+      inStockValue,
+      soldStockValue,
+      productId,
+      rating,
+      visibility: visibility || "on",
+      img: imageUrls,
+    };
+
     const product = new Product(productData);
     const result = await product.save();
-    
+
     res.status(201).json({
       success: true,
-      message: 'Product created successfully',
-      product: result
+      message: "Product created successfully",
+      product: result,
     });
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: 'Error creating product',
-      error: error.message
+      message: "Error creating product",
+      error: error.message,
     });
   }
 });
 
 // Get All Products Route
-app.get('/get-product', async (req, res) => {
+app.get("/get-product", async (req, res) => {
   try {
     const products = await Product.find();
     res.status(200).json({
       success: true,
-      products
+      products,
     });
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: 'Error fetching products',
-      error: error.message
+      message: "Error fetching products",
+      error: error.message,
     });
   }
 });
 
 // Update Product Visibility Route
-app.put('/update-visibility', async (req, res) => {
+app.put("/update-visibility", async (req, res) => {
   try {
     const { productId, visibility } = req.body;
 
@@ -164,27 +227,26 @@ app.put('/update-visibility', async (req, res) => {
     if (!updatedProduct) {
       return res.status(404).json({
         success: false,
-        message: 'Product not found'
+        message: "Product not found",
       });
     }
 
     res.status(200).json({
       success: true,
-      message: 'Product visibility updated successfully',
-      product: updatedProduct
+      message: "Product visibility updated successfully",
+      product: updatedProduct,
     });
-
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: 'Error updating product visibility',
-      error: error.message
+      message: "Error updating product visibility",
+      error: error.message,
     });
   }
 });
 
 // Get Product by Product ID Route
-app.post('/:productId', async (req, res) => {
+app.post("/:productId", async (req, res) => {
   try {
     const { productId } = req.body;
 
@@ -194,54 +256,54 @@ app.post('/:productId', async (req, res) => {
     if (!product) {
       return res.status(404).json({
         success: false,
-        message: 'Product not found'
+        message: "Product not found",
       });
     }
 
     res.status(200).json({
       success: true,
-      product
+      product,
     });
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: 'Error fetching product',
-      error: error.message
+      message: "Error fetching product",
+      error: error.message,
     });
   }
 });
 
-
 // Get Product by ID Route
-app.get('/product/:productId', async (req, res) => {
+app.get("/product/:productId", async (req, res) => {
   try {
     const { productId } = req.params;
     const product = await Product.findById(productId);
-    
+
     if (!product) {
       return res.status(404).json({
         success: false,
-        message: 'Product not found'
+        message: "Product not found",
       });
     }
 
     res.status(200).json({
       success: true,
-      product
+      product,
     });
   } catch (error) {
     res.status(500).json({
-      success: false, 
-      message: 'Error fetching product',
-      error: error.message
+      success: false,
+      message: "Error fetching product",
+      error: error.message,
     });
   }
 });
 
 // Update Stock Status Route
-app.put('/instock-update', async (req, res) => {
+app.put("/instock-update", async (req, res) => {
   try {
-    const { productId, price, name, category, inStockValue, soldStockValue } = req.body;
+    const { productId, price, name, category, inStockValue, soldStockValue } =
+      req.body;
     // Find and update the product
     const updatedProduct = await Product.findOneAndUpdate(
       { productId: productId }, // Match by productId
@@ -251,8 +313,8 @@ app.put('/instock-update', async (req, res) => {
           price: price,
           category: category,
           inStockValue: inStockValue,
-          soldStockValue: soldStockValue
-        }
+          soldStockValue: soldStockValue,
+        },
       },
       { new: true, upsert: false } // Return the updated document
     );
@@ -260,22 +322,21 @@ app.put('/instock-update', async (req, res) => {
     if (!updatedProduct) {
       return res.status(404).json({
         success: false,
-        message: 'Product not found'
+        message: "Product not found",
       });
     }
 
     res.status(200).json({
       success: true,
-      message: 'Stock status updated successfully',
-      product: updatedProduct // Include updated product in response for verification
+      message: "Stock status updated successfully",
+      product: updatedProduct, // Include updated product in response for verification
     });
-
   } catch (error) {
     // Log the error
     res.status(500).json({
       success: false,
-      message: 'Error updating stock status',
-      error: error.message
+      message: "Error updating stock status",
+      error: error.message,
     });
   }
 });
@@ -283,13 +344,13 @@ app.put('/instock-update', async (req, res) => {
 // Complaints Schema
 
 // Assign Product ID Route
-app.get('/assign-productid', async (req, res) => {
+app.get("/assign-productid", async (req, res) => {
   try {
     // Find all products
     const products = await Product.find();
-    
+
     if (products.length === 0) {
-      return res.status(404).send('No products found to assign productIds.');
+      return res.status(404).send("No products found to assign productIds.");
     }
 
     // Update each product to add a productId
@@ -302,7 +363,7 @@ app.get('/assign-productid', async (req, res) => {
       do {
         productId = Math.floor(100000 + Math.random() * 900000).toString();
       } while (usedIds.has(productId));
-      
+
       usedIds.add(productId);
 
       const updateResult = await Product.findOneAndUpdate(
@@ -319,32 +380,32 @@ app.get('/assign-productid', async (req, res) => {
     }
 
     // Save all updated products
-    await Promise.all(updatedProducts.map(product => product.save()));
+    await Promise.all(updatedProducts.map((product) => product.save()));
 
     res.status(200).json({
       success: true,
-      message: 'Product IDs assigned successfully',
-      products: updatedProducts
+      message: "Product IDs assigned successfully",
+      products: updatedProducts,
     });
   } catch (err) {
-    console.error('Error during product ID assignment:', err);
+    console.error("Error during product ID assignment:", err);
     res.status(500).json({
       success: false,
-      message: 'Error assigning product IDs',
-      error: err.message
+      message: "Error assigning product IDs",
+      error: err.message,
     });
   }
 });
 // Address Schema
 const addressSchema = new mongoose.Schema({
   userId: { type: String, unique: true },
-  address: String
+  address: String,
 });
 
-const Address = mongoose.model('Address', addressSchema);
+const Address = mongoose.model("Address", addressSchema);
 
 // Update or Create Address Route
-app.post('/update-address', async (req, res) => {
+app.post("/update-address", async (req, res) => {
   try {
     const { userId, address } = req.body;
 
@@ -360,22 +421,21 @@ app.post('/update-address', async (req, res) => {
       // Create new address entry
       const newAddress = new Address({
         userId,
-        address
+        address,
       });
       result = await newAddress.save();
     }
 
     res.status(200).json({
       success: true,
-      message: 'Address updated successfully',
-      address: result
+      message: "Address updated successfully",
+      address: result,
     });
-
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: 'Error updating address',
-      error: error.message
+      message: "Error updating address",
+      error: error.message,
     });
   }
 });
@@ -390,60 +450,58 @@ const orderSchema = new mongoose.Schema({
   name: String,
   productIds: [String],
   trackingId: String,
-  price: Number
+  price: Number,
 });
 
-const Order = mongoose.model('Order', orderSchema);
+const Order = mongoose.model("Order", orderSchema);
 
 // Place Order Route
 // Get All Orders Route
-app.get('/get-orders', async (req, res) => {
+app.get("/get-orders", async (req, res) => {
   try {
     const orders = await Order.find();
-    
+
     res.status(200).json({
       success: true,
-      orders
+      orders,
     });
-
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: 'Error fetching orders',
-      error: error.message
+      message: "Error fetching orders",
+      error: error.message,
     });
   }
 });
 
 // Get User Details Route
-app.get('/get-user', async (req, res) => {
+app.get("/get-user", async (req, res) => {
   try {
-    const users = await mongoose.model('User').find(
+    const users = await mongoose.model("User").find(
       {}, // Remove filter to get all users
-      '-password' // Exclude only the password field
+      "-password" // Exclude only the password field
     );
-    
+
     res.status(200).json({
       success: true,
-      users
+      users,
     });
-
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: 'Error fetching user details',
-      error: error.message
+      message: "Error fetching user details",
+      error: error.message,
     });
   }
 });
 
 // Update Account Status Route
-app.put('/update-account-status', async (req, res) => {
+app.put("/update-account-status", async (req, res) => {
   try {
     const { userId, accountStatus } = req.body;
 
     // Find and update the user, and get the updated document
-    const updatedUser = await mongoose.model('User').findOneAndUpdate(
+    const updatedUser = await mongoose.model("User").findOneAndUpdate(
       { userId: userId },
       { accountStatus },
       { new: true } // This option returns the modified document rather than the original
@@ -452,38 +510,37 @@ app.put('/update-account-status', async (req, res) => {
     if (!updatedUser) {
       return res.status(404).json({
         success: false,
-        message: 'User not found'
+        message: "User not found",
       });
     }
 
     res.status(200).json({
       success: true,
-      message: 'Account status updated successfully',
+      message: "Account status updated successfully",
       user: {
         userId: updatedUser.userId,
-        accountStatus: updatedUser.accountStatus
-      }
+        accountStatus: updatedUser.accountStatus,
+      },
     });
-
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: 'Error updating account status',
-      error: error.message
+      message: "Error updating account status",
+      error: error.message,
     });
   }
 });
 
 const otpStore = new Map();
 
-app.post('/find-my-order', async (req, res) => {
+app.post("/find-my-order", async (req, res) => {
   try {
     const { userId } = req.body;
 
     if (!userId) {
       return res.status(400).json({
         success: false,
-        message: 'User ID is required'
+        message: "User ID is required",
       });
     }
 
@@ -493,7 +550,7 @@ app.post('/find-my-order', async (req, res) => {
     if (!orders || orders.length === 0) {
       return res.status(404).json({
         success: false,
-        message: 'No orders found for this user'
+        message: "No orders found for this user",
       });
     }
 
@@ -501,7 +558,7 @@ app.post('/find-my-order', async (req, res) => {
     const findProductDetails = async (productIds) => {
       try {
         const productDetails = [];
-        
+
         // Make API calls for each productId
         for (const productId of productIds) {
           try {
@@ -516,7 +573,7 @@ app.post('/find-my-order', async (req, res) => {
 
         return productDetails;
       } catch (error) {
-        throw new Error('Error fetching product details: ' + error.message);
+        throw new Error("Error fetching product details: " + error.message);
       }
     };
 
@@ -526,26 +583,23 @@ app.post('/find-my-order', async (req, res) => {
         const productDetails = await findProductDetails(order.productIds);
         return {
           ...order.toObject(),
-          products: productDetails
+          products: productDetails,
         };
       })
     );
 
     res.status(200).json({
       success: true,
-      orders: ordersWithProducts
+      orders: ordersWithProducts,
     });
-
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: 'Error finding orders',
-      error: error.message
+      message: "Error finding orders",
+      error: error.message,
     });
   }
 });
-
-
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
